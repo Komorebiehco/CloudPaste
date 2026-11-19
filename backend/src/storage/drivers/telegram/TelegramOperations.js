@@ -119,13 +119,26 @@ class AsyncSemaphore {
     this._drain();
   }
 
-  async acquire() {
+  async acquire(signal) {
+    if (signal?.aborted) {
+      throw signal.reason ?? new DOMException("Aborted", "AbortError");
+    }
     if (this.current < this.max) {
       this.current += 1;
       return this._release.bind(this);
     }
-    return await new Promise((resolve) => {
-      this.queue.push(resolve);
+    return await new Promise((resolve, reject) => {
+      const grant = (release) => {
+        signal?.removeEventListener("abort", abort);
+        resolve(release);
+      };
+      const abort = () => {
+        const index = this.queue.indexOf(grant);
+        if (index >= 0) this.queue.splice(index, 1);
+        reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+      };
+      this.queue.push(grant);
+      signal?.addEventListener("abort", abort, { once: true });
     });
   }
 }
@@ -155,9 +168,9 @@ function getTelegramSemaphoreKey(driver) {
   return driver?.config?.id || `${driver?.targetChatId || "unknown-chat"}`;
 }
 
-async function withTelegramConcurrency(driver, fn) {
+async function withTelegramConcurrency(driver, fn, signal) {
   const sem = getUploadSemaphore(getTelegramSemaphoreKey(driver), driver?.uploadConcurrency);
-  const release = await sem.acquire();
+  const release = await sem.acquire(signal);
   try {
     return await fn();
   } finally {
@@ -239,7 +252,7 @@ export async function callTelegramBotApiJson(driver, url, makeInit, options = {}
         } finally {
           requestFinishedAt = Date.now();
         }
-      });
+      }, signal);
 
       if (resp.ok && data?.ok) {
         return { resp, data };
@@ -450,6 +463,16 @@ export async function sendDocument(driver, blob, { filename, contentType } = {})
           maxAttempts: 1,
         });
         const actualSize = info?.fileSize == null ? NaN : Number(info.fileSize);
+        if (!receiptSizeVerified && !(Number.isFinite(actualSize) && actualSize >= 0)) {
+          const err = new DriverError("TELEGRAM 上传后校验失败：回执未提供有效文件大小", {
+            status: ApiStatus.BAD_GATEWAY,
+            code: "DRIVER_ERROR.TELEGRAM_UPLOAD_VERIFY_FAILED",
+            expose: false,
+            details: { expected: blob.size, actual: null },
+          });
+          err.retryable = false;
+          throw err;
+        }
         if (Number.isFinite(actualSize) && actualSize >= 0 && actualSize !== blob.size) {
           const err = new DriverError("TELEGRAM 上传后校验失败：文件大小不一致", {
             status: ApiStatus.BAD_GATEWAY,

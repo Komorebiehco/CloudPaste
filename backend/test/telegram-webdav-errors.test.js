@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sendDocument } from "../src/storage/drivers/telegram/TelegramOperations.js";
+import { sendDocument, getFileInfo, getUploadSemaphore } from "../src/storage/drivers/telegram/TelegramOperations.js";
 import { withWebDAVErrorHandling } from "../src/webdav/utils/errorUtils.js";
 
 const driver = () => ({
@@ -170,4 +170,49 @@ test("Slow getFile is aborted after five seconds and uses the checked receipt", 
   assert.equal(verificationSignal.aborted, true);
   assert.equal(fetchMock.mock.callCount(), 2);
   assert.equal(JSON.parse(warnings.mock.calls[0].arguments[0]).getFile, "timeout");
+});
+
+test("Missing sizes in both Telegram responses cannot pass verification", async (t) => {
+  t.mock.method(globalThis, "fetch", async (url) =>
+    url.endsWith("/sendDocument")
+      ? successfulReply()
+      : Response.json({ ok: true, result: { file_path: "synthetic.bin" } }),
+  );
+  await assert.rejects(
+    sendDocument({ ...driver(), verifyAfterUpload: true }, new Blob(["backup"])),
+    (e) => e.code === "DRIVER_ERROR.TELEGRAM_UPLOAD_VERIFY_FAILED" && e.retryable === false,
+  );
+});
+
+test("A queued metadata query aborts without taking another request's permit", async (t) => {
+  const d = { ...driver(), config: { id: "telegram-queue-abort" } };
+  const sem = getUploadSemaphore(d.config.id, 1);
+  const release = await sem.acquire();
+  const controller = new AbortController();
+  const fetchMock = t.mock.method(globalThis, "fetch", async () => {
+    throw new Error("Canceled queued query must never fetch");
+  });
+  const pending = getFileInfo(d, "test-file", { signal: controller.signal, maxAttempts: 1 });
+  const rejected = assert.rejects(pending, (e) => e.name === "AbortError");
+  assert.equal(sem.queue.length, 1);
+  controller.abort();
+  await rejected;
+  assert.equal(sem.queue.length, 0);
+  assert.equal(sem.current, 1);
+  assert.equal(fetchMock.mock.callCount(), 0);
+  release();
+  assert.equal(sem.current, 0);
+  const releaseNext = await sem.acquire();
+  releaseNext();
+});
+
+test("A metadata query aborted before admission never starts a request", async (t) => {
+  const controller = new AbortController();
+  controller.abort();
+  const fetchMock = t.mock.method(globalThis, "fetch", async () => successfulReply());
+  await assert.rejects(
+    getFileInfo(driver(), "test-file", { signal: controller.signal, maxAttempts: 1 }),
+    (e) => e.name === "AbortError",
+  );
+  assert.equal(fetchMock.mock.callCount(), 0);
 });
