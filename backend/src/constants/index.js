@@ -45,6 +45,7 @@ export const ApiStatus = {
   CONFLICT: 409,
   GONE: 410,
   INTERNAL_ERROR: 500,
+  BAD_GATEWAY: 502,
 };
 
 //文件类型常量

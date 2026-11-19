@@ -41,6 +41,7 @@ function getStatusText(statusCode) {
     423: "Locked",
     500: "Internal Server Error",
     501: "Not Implemented",
+    502: "Bad Gateway",
     507: "Insufficient Storage",
   };
 

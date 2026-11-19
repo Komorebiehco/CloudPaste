@@ -591,7 +591,9 @@ export class TelegramStorageDriver extends BaseDriver {
       });
     }
 
+    const receiveStartedAt = Date.now();
     const blob = await this._toBlob(fileOrStream, { contentType, filename });
+    console.info(JSON.stringify({ type: "telegram.upload.receive", bytes: blob.size, durationMs: Date.now() - receiveStartedAt }));
     if (Number.isFinite(this.directUploadMaxBytes) && this.directUploadMaxBytes > 0 && blob.size > this.directUploadMaxBytes) {
       throw new DriverError(`TELEGRAM 单次上传过大：未勾选“自建 Bot API”时（official），直传仅支持 ≤${Math.floor(this.directUploadMaxBytes / (1024 * 1024))}MB；更大的文件请使用“挂载浏览器”的分片上传`, {
         status: ApiStatus.BAD_REQUEST,
@@ -622,6 +624,7 @@ export class TelegramStorageDriver extends BaseDriver {
     // 1) sendDocument 成功后，只允许重试“写索引”（vfs_nodes），不允许重试“再发一次消息”。
     // 2) 对 DB 写入做短暂重试
     // 3) 如果最终还是写失败：明确标记为不可重试（retryable=false），让上层停止自动重试
+    const indexStartedAt = Date.now();
     const MAX_INDEX_WRITE_ATTEMPTS = 6;
     const BASE_INDEX_BACKOFF_MS = 200;
     let lastIndexError = null;
@@ -664,6 +667,7 @@ export class TelegramStorageDriver extends BaseDriver {
       }
     }
 
+    console.info(JSON.stringify({ type: "telegram.upload.index", durationMs: Date.now() - indexStartedAt, ok: Boolean(node) }));
     if (!node) {
       const err = new DriverError(
         "Telegram 上传已成功，但写入目录索引失败：为避免重复上传，已停止自动重试；请稍后手动重试一次复制/上传。",

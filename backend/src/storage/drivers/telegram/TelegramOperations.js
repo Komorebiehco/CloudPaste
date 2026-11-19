@@ -219,12 +219,26 @@ export async function callTelegramBotApiJson(driver, url, makeInit, options = {}
   let lastError = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const queuedAt = Date.now();
+    let requestStartedAt = null;
+    let requestFinishedAt = null;
+    let responseStatus = null;
+    let responseErrorCode = null;
+    let responseOk = false;
     try {
       const { resp, data } = await withTelegramConcurrency(driver, async () => {
-        const init = (typeof makeInit === "function" ? makeInit(attempt) : makeInit) || {};
-        const r = await fetch(url, { ...init, signal });
-        const d = await r.json().catch(() => null);
-        return { resp: r, data: d };
+        requestStartedAt = Date.now();
+        try {
+          const init = (typeof makeInit === "function" ? makeInit(attempt) : makeInit) || {};
+          const r = await fetch(url, { ...init, signal });
+          responseStatus = r.status;
+          const d = await r.json().catch(() => null);
+          responseErrorCode = Number(d?.error_code) || null;
+          responseOk = Boolean(r.ok && d?.ok);
+          return { resp: r, data: d };
+        } finally {
+          requestFinishedAt = Date.now();
+        }
       });
 
       if (resp.ok && data?.ok) {
@@ -259,6 +273,19 @@ export async function callTelegramBotApiJson(driver, url, makeInit, options = {}
         continue;
       }
       break;
+    } finally {
+      // Keep tokens, file identifiers, URLs and upstream response bodies out of telemetry.
+      const finishedAt = Date.now();
+      console.info(JSON.stringify({
+        type: "telegram.api",
+        operation,
+        attempt,
+        queueMs: (requestStartedAt ?? finishedAt) - queuedAt,
+        requestMs: requestStartedAt === null ? 0 : (requestFinishedAt ?? finishedAt) - requestStartedAt,
+        httpStatus: responseStatus,
+        errorCode: responseErrorCode,
+        ok: responseOk,
+      }));
     }
   }
 
@@ -276,7 +303,7 @@ export async function getFileInfo(driver, fileId, options = {}) {
   qs.set("file_id", String(fileId));
   const full = `${url}?${qs.toString()}`;
 
-  const maxAttempts = 5;
+  const maxAttempts = options?.maxAttempts ?? 5;
   const baseDelayMs = 900;
 
   const { data } = await callTelegramBotApiJson(driver, full, () => ({ method: "GET" }), {
@@ -399,11 +426,30 @@ export async function sendDocument(driver, blob, { filename, contentType } = {})
       throw err;
     }
 
-    // 上传后校验：开启后会再调用 getFile 校验大小（更慢但更稳）
+    // 先核对 Telegram 已确认接收的大小。getFile 的补充校验有时间预算，
+    // 避免成功上传后仍因元数据查询阻塞数十秒，诱发客户端重复上传。
     if (driver.verifyAfterUpload) {
+      const receiptSize = fileLike?.file_size == null ? NaN : Number(fileLike.file_size);
+      const receiptSizeVerified = Number.isFinite(receiptSize) && receiptSize >= 0;
+      if (receiptSizeVerified && receiptSize !== blob.size) {
+        const err = new DriverError("TELEGRAM 上传回执校验失败：文件大小不一致", {
+          status: ApiStatus.BAD_GATEWAY,
+          code: "DRIVER_ERROR.TELEGRAM_UPLOAD_VERIFY_FAILED",
+          expose: false,
+          details: { expected: blob.size, actual: receiptSize },
+        });
+        err.retryable = false;
+        throw err;
+      }
+
+      const verificationController = new AbortController();
+      const verificationTimeout = setTimeout(() => verificationController.abort(), 5000);
       try {
-        const info = await getFileInfo(driver, fileId, {});
-        const actualSize = Number(info?.fileSize);
+        const info = await getFileInfo(driver, fileId, {
+          signal: verificationController.signal,
+          maxAttempts: 1,
+        });
+        const actualSize = info?.fileSize == null ? NaN : Number(info.fileSize);
         if (Number.isFinite(actualSize) && actualSize >= 0 && actualSize !== blob.size) {
           const err = new DriverError("TELEGRAM 上传后校验失败：文件大小不一致", {
             status: ApiStatus.BAD_GATEWAY,
@@ -415,10 +461,19 @@ export async function sendDocument(driver, blob, { filename, contentType } = {})
           throw err;
         }
       } catch (verifyError) {
-        if (verifyError && verifyError.retryable === false) {
+        if (verifyError?.code === "DRIVER_ERROR.TELEGRAM_UPLOAD_VERIFY_FAILED" || !receiptSizeVerified) {
           throw verifyError;
         }
-        console.warn("[TELEGRAM] 上传后校验失败（已忽略，不影响本次上传结果）：", verifyError?.message || verifyError);
+        // 成功回执已核对大小时，元数据查询失败不应把已完成上传变成失败。
+        // 不记录文件标识、Bot URL、凭据或完整上游响应。
+        console.warn(JSON.stringify({
+          type: "telegram.upload.verify",
+          source: "sendDocument",
+          sizeVerified: true,
+          getFile: verificationController.signal.aborted ? "timeout" : "unavailable",
+        }));
+      } finally {
+        clearTimeout(verificationTimeout);
       }
     }
 
