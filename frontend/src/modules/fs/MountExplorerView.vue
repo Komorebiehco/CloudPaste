@@ -110,6 +110,18 @@
         @copy-started="handleCopyStarted"
       />
 
+      <!-- 移动目标文件夹弹窗 -->
+      <MoveModal
+        v-if="isMoveModalOpen"
+        :is-open="isMoveModalOpen"
+        :dark-mode="darkMode"
+        :selected-items="moveModalItems"
+        :source-path="currentPath"
+        :basic-path="isAdmin ? '/' : apiKeyInfo?.basic_path || '/'"
+        @close="isMoveModalOpen = false"
+        @moved="handleMoved"
+      />
+
       <!-- 任务列表弹窗 -->
       <TaskListModal
         v-if="hasEverOpenedTasksModal"
@@ -381,10 +393,12 @@
     <FloatingActionBar
       v-if="hasPermission && selectedCount > 0"
       :selected-count="selectedCount"
+      :can-move="canMoveSelection"
       :dark-mode="darkMode"
       @download="handleBatchDownload"
       @copy-link="handleBatchGetLink"
       @copy="handleBatchCopy"
+      @move="openMoveModal(getSelectedItems())"
       @add-to-basket="handleBatchAddToBasket"
       @rename="handleBatchRename"
       @delete="batchDelete"
@@ -441,6 +455,7 @@ import FileOperations from "@/modules/fs/components/shared/FileOperations.vue";
 const FilePreview = defineAsyncComponent(() => import("@/modules/fs/components/preview/FilePreview.vue"));
 const UppyUploadModal = defineAsyncComponent(() => import("@/modules/fs/components/shared/modals/UppyUploadModal.vue"));
 const CopyModal = defineAsyncComponent(() => import("@/modules/fs/components/shared/modals/CopyModal.vue"));
+const MoveModal = defineAsyncComponent(() => import("@/modules/fs/components/shared/modals/MoveModal.vue"));
 const TaskListModal = defineAsyncComponent(() => import("@/modules/fs/components/shared/modals/TaskListModal.vue"));
 const SearchModal = defineAsyncComponent(() => import("@/modules/fs/components/shared/modals/SearchModal.vue"));
 import PathPasswordDialog from "@/modules/fs/components/shared/modals/PathPasswordDialog.vue";
@@ -456,6 +471,7 @@ import { useExplorerSettings } from "@/composables/useExplorerSettings";
 import { createFsItemNameDialogValidator, isSameOrSubPath, validateFsItemName } from "@/utils/fsPathUtils.js";
 import { useFsMediaLightbox } from "@/modules/fs/composables/useFsMediaLightbox";
 import { createLogger } from "@/utils/logger.js";
+import { useAuthStore } from "@/stores/authStore.js";
 
 const { t } = useI18n();
 const log = createLogger("MountExplorerView");
@@ -616,6 +632,26 @@ const contextMenuRenameItem = ref(null);
 const contextMenuRenameDialogOpen = ref(false);
 const isRenaming = ref(false); // 重命名操作的 loading 状态
 const contextMenuCopyItems = ref([]);
+const isMoveModalOpen = ref(false);
+const moveModalItems = ref([]);
+const moveAuth = useAuthStore();
+const canMoveItem = item => moveAuth.hasMountRenamePermission && !isVirtualDirectory.value && !item?.isVirtual;
+const canMoveSelection = computed(() => getSelectedItems().length > 0 && getSelectedItems().every(canMoveItem));
+const openMoveModal = items => {
+  const list = Array.isArray(items) ? items : [items];
+  if (!list.length || !list.every(canMoveItem)) return;
+  moveModalItems.value = list.map(item => ({ ...item }));
+  isMoveModalOpen.value = true;
+};
+const handleMoved = async ({ results }) => {
+  const moved = results.filter(item => item.success).map(item => item.path);
+  invalidateCaches();
+  removeItemsFromCurrentDirectory(moved);
+  for (const item of getSelectedItems()) {
+    if (moved.includes(item.path)) selectItem(item, false);
+  }
+  await refreshDirectory();
+};
 // 右键菜单高亮的项目路径（临时高亮，不是勾选选中）
 const contextHighlightPath = ref(null);
 // DirectoryList 组件引用
@@ -688,6 +724,8 @@ const initContextMenu = () => {
   contextMenu = useContextMenu({
     onDownload: handleDownload,
     onGetLink: handleGetLink,
+    onMove: openMoveModal,
+    canMove: canMoveItem,
     onRename: (item) => {
       // 直接触发重命名，设置待重命名的项目
       contextMenuRenameItem.value = item;

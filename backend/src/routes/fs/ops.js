@@ -5,6 +5,7 @@ import { FileSystem } from "../../storage/fs/FileSystem.js";
 import { useRepositories } from "../../utils/repositories.js";
 import { usePolicy } from "../../security/policies/policies.js";
 import { jobTypeCatalog } from "../../storage/fs/tasks/JobTypeCatalog.js";
+import { registerMoveRoute } from "./move.js";
 
 const parseJsonBody = async (c, next) => {
   const body = await c.req.json();
@@ -74,6 +75,7 @@ const dynamicJobPolicy = async (c, next) => {
 
 export const registerOpsRoutes = (router, helpers) => {
   const { getServiceParams } = helpers;
+  registerMoveRoute(router, helpers);
 
   // ========== Job Types API (for UI discovery) ==========
   // 返回“当前用户可见”的任务类型清单

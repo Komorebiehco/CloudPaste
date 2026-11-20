@@ -352,6 +352,13 @@ export function useFsService() {
     return true;
   };
 
+  const moveItem = async (sourcePath, targetDirectory) => {
+    const response = await api.fs.moveItem(sourcePath, targetDirectory);
+    if (!response?.success) throw new Error(response?.message || "移动失败");
+    clearDirectoryListCache();
+    return response.data;
+  };
+
   /**
    * 创建目录
    * @param {string} fullPath
@@ -497,6 +504,7 @@ export function useFsService() {
     prefetchDirectoryList,
     clearDirectoryListCache,
     renameItem,
+    moveItem,
     createDirectory,
     batchDeleteItems,
     batchCopyItems,

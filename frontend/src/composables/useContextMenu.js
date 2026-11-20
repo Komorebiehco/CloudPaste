@@ -10,6 +10,7 @@ import {
   IconDownload,
   IconLink,
   IconCopy,
+  IconArrowRight,
   IconShoppingCart,
   IconCheckbox,
   IconRename,
@@ -21,6 +22,7 @@ const icons = {
   download: () => h(IconDownload, { size: 'sm' }),
   link: () => h(IconLink, { size: 'sm' }),
   copy: () => h(IconCopy, { size: 'sm' }),
+  move: () => h(IconArrowRight, { size: 'sm' }),
   basket: () => h(IconShoppingCart, { size: 'sm' }),
   checkbox: () => h(IconCheckbox, { size: 'sm' }),
   edit: () => h(IconRename, { size: 'sm' }),
@@ -41,7 +43,7 @@ const icons = {
  * @returns {Object} 右键菜单方法
  */
 export function useContextMenu(options = {}) {
-  const { onDownload, onGetLink, onRename, onDelete, onCopy, onAddToBasket, onToggleCheckboxes, t } = options
+  const { onDownload, onGetLink, onRename, onDelete, onCopy, onMove, canMove, onAddToBasket, onToggleCheckboxes, t } = options
   
   // 当前选中的项目
   const contextItem = ref(null)
@@ -78,6 +80,15 @@ export function useContextMenu(options = {}) {
       onClick: () => onCopy?.(item),
     })
     
+    // 移动到其他文件夹
+    if (onMove && (!canMove || canMove(item))) {
+      items.push({
+        label: t?.('mount.fileItem.move') || '移动',
+        icon: icons.move,
+        onClick: () => onMove(item),
+      })
+    }
+
     // 添加到文件篮
     items.push({
       label: t?.('mount.contextMenu.addToBasket') || '添加到文件篮',
@@ -132,6 +143,15 @@ export function useContextMenu(options = {}) {
       onClick: () => onCopy?.(selectedItems),
     })
     
+    // 批量移动到其他文件夹
+    if (onMove && selectedItems.every(item => !canMove || canMove(item))) {
+      items.push({
+        label: t?.('mount.moveModal.batch') || '批量移动',
+        icon: icons.move,
+        onClick: () => onMove(selectedItems),
+      })
+    }
+
     // 批量添加到文件篮
     items.push({
       label: t?.('mount.contextMenu.batchAddToBasket') || '批量添加到文件篮',

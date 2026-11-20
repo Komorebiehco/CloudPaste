@@ -159,6 +159,10 @@ export async function renameItem(oldPath, newPath) {
   return post(`/fs/rename`, { oldPath, newPath });
 }
 
+export async function moveItem(sourcePath, targetDirectory) {
+  return post("/fs/move", { sourcePath, targetDirectory }, { timeout: 120000 });
+}
+
 /**
  * 更新文件内容
  * @param {string} path 文件路径

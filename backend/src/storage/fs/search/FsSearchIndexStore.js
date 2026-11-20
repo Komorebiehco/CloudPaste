@@ -93,8 +93,11 @@ export class FsSearchIndexStore {
     if (parent !== "/" && !parent.endsWith("/")) parent = `${parent}/`;
 
     // SQLite substr 是 1-based；这里取 parent 后面的相对路径
-    const startPos = parent.length + 1;
-    const likePrefix = `${parent}%`;
+    const startPos = Array.from(parent).length + 1;
+    // D1 limits LIKE/GLOB patterns to 50 bytes. A binary prefix range also
+    // treats '_' and '%' literally and uses the (mount_id, fs_path) index.
+    // Every normalized directory prefix ends in '/', whose successor is '0'.
+    const prefixEnd = `${parent.slice(0, -1)}0`;
 
     const sql = `
       WITH scoped AS (
@@ -105,7 +108,7 @@ export class FsSearchIndexStore {
           modified_ms,
           substr(fs_path, ?) AS rel
         FROM ${DbTables.FS_SEARCH_INDEX_ENTRIES}
-        WHERE mount_id = ? AND fs_path LIKE ?
+        WHERE mount_id = ? AND fs_path >= ? AND fs_path < ?
       )
       SELECT
         (? || substr(rel, 1, instr(rel, '/'))) AS dir_path,
@@ -117,7 +120,7 @@ export class FsSearchIndexStore {
       GROUP BY dir_path
     `;
 
-    const resp = await this.db.prepare(sql).bind(startPos, id, likePrefix, parent).all();
+    const resp = await this.db.prepare(sql).bind(startPos, id, parent, prefixEnd, parent).all();
     return Array.isArray(resp?.results) ? resp.results : [];
   }
 

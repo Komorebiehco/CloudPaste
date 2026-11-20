@@ -4,7 +4,7 @@
     <Transition name="slide-up">
       <div
         v-if="selectedCount > 0"
-        class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 px-3 py-2 rounded-token-xl shadow-token-3"
+        class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex w-max max-w-[calc(100vw-24px)] flex-wrap items-center justify-center gap-1 px-3 py-2 rounded-token-xl shadow-token-3"
         :class="darkMode 
           ? 'bg-gray-800/95 backdrop-blur-md border border-gray-700' 
           : 'bg-white/95 backdrop-blur-md border border-gray-200'"
@@ -45,6 +45,17 @@
           @click="handleCopy"
         >
           <IconCopy size="sm" />
+        </ActionButton>
+
+        <!-- 移动到其他文件夹 -->
+        <ActionButton
+          v-if="canMove"
+          :title="t('mount.fileItem.move')"
+          :dark-mode="darkMode"
+          @click="emit('move')"
+        >
+          <IconArrowRight size="sm" />
+          <span class="text-xs">{{ t('mount.fileItem.move') }}</span>
         </ActionButton>
 
         <!-- 添加到文件篮按钮 - 购物车图标 -->
@@ -100,6 +111,7 @@ import {
   IconDownload,
   IconLink,
   IconCopy,
+  IconArrowRight,
   IconShoppingCart,
   IconRename,
   IconDelete,
@@ -108,7 +120,7 @@ import {
 
 // 操作按钮子组件
 const ActionButton = (props, { slots, emit }) => {
-  const baseClass = 'p-2 rounded-token-md transition-all duration-token-fast'
+  const baseClass = 'inline-flex items-center gap-1 p-2 rounded-token-md transition-all duration-token-fast'
   const enabledClass = props.darkMode
     ? 'hover:bg-gray-700 text-gray-300 hover:text-gray-100'
     : 'hover:bg-gray-100 text-gray-600 hover:text-gray-900'
@@ -120,6 +132,7 @@ const ActionButton = (props, { slots, emit }) => {
   return h('button', {
     type: 'button',
     title: props.title,
+    'aria-label': props.title,
     disabled: props.disabled,
     class: `${baseClass} ${props.disabled ? disabledClass : props.danger ? dangerClass : enabledClass}`,
     onClick: () => !props.disabled && emit('click')
@@ -129,6 +142,10 @@ ActionButton.props = ['title', 'darkMode', 'disabled', 'danger']
 ActionButton.emits = ['click']
 
 const props = defineProps({
+  canMove: {
+    type: Boolean,
+    default: false
+  },
   selectedCount: {
     type: Number,
     default: 0
@@ -143,6 +160,7 @@ const emit = defineEmits([
   'download',
   'copy-link',
   'copy',
+  'move',
   'add-to-basket',
   'rename',
   'delete',

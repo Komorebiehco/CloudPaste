@@ -269,6 +269,10 @@ export async function fetchApi(endpoint, options = {}) {
       apiLog.debug(`API响应文本: ${responseData.substring(0, 100)}${responseData.length > 100 ? "..." : ""}`);
     }
 
+    // Preserve the status only for a fully read response. Network, timeout and
+    // response parsing failures must remain distinguishable from a rejected write.
+    const responseError = (message) => Object.assign(new Error(message), { status: response.status });
+
     // 如果响应不成功，抛出错误
     if (!response.ok) {
       // 对于blob响应的错误，需要重新解析为JSON获取错误信息
@@ -298,7 +302,7 @@ export async function fetchApi(endpoint, options = {}) {
           // 确保返回后端提供的具体错误信息
           const errorMessage = responseData && responseData.message ? responseData.message : "密码错误";
 
-          const error = new Error(errorMessage);
+          const error = responseError(errorMessage);
           error.__logged = true;
           throw error;
         }
@@ -308,7 +312,7 @@ export async function fetchApi(endpoint, options = {}) {
           // 返回具体的错误信息，通常是"当前密码错误"
           const errorMessage = responseData && responseData.message ? responseData.message : "验证失败";
 
-          const error = new Error(errorMessage);
+          const error = responseError(errorMessage);
           error.__logged = true;
           throw error;
         }
@@ -337,7 +341,7 @@ export async function fetchApi(endpoint, options = {}) {
           if (isAuthErrorCode || isAdminAuthEndpoint) {
             apiLog.debug("管理员令牌验证失败：执行登出");
             await logoutViaBridge();
-            const error = new Error("管理员会话已过期，请重新登录");
+            const error = responseError("管理员会话已过期，请重新登录");
             error.__logged = true;
             throw error;
           }
@@ -348,7 +352,7 @@ export async function fetchApi(endpoint, options = {}) {
               ? responseData.message
               : "请求未授权，但当前管理员会话仍保持，请检查配置或稍后重试";
 
-          const error = new Error(errorMessage);
+          const error = responseError(errorMessage);
           error.__logged = true;
           throw error;
         }
@@ -366,19 +370,19 @@ export async function fetchApi(endpoint, options = {}) {
 
           if (isPermissionIssue) {
             apiLog.debug("API密钥权限不足：不执行登出");
-            const error = new Error(responseData.message || "访问被拒绝，您可能无权执行此操作");
+            const error = responseError(responseData.message || "访问被拒绝，您可能无权执行此操作");
             error.__logged = true;
             throw error;
           }
 
           apiLog.debug("API密钥验证失败：执行登出");
           await logoutViaBridge();
-          const apiKeyError = new Error("API密钥无效或已过期");
+          const apiKeyError = responseError("API密钥无效或已过期");
           apiKeyError.__logged = true;
           throw apiKeyError;
         }
 
-        const unauthorizedError = new Error("未授权访问，请登录后重试");
+        const unauthorizedError = responseError("未授权访问，请登录后重试");
         unauthorizedError.__logged = true;
         throw unauthorizedError;
       }
@@ -388,15 +392,15 @@ export async function fetchApi(endpoint, options = {}) {
         apiLog.error(`❌ 资源冲突错误(${url}):`, responseData);
         // 使用后端返回的具体错误信息，无论是字符串形式还是对象形式
         if (typeof responseData === "string") {
-          const error = new Error(responseData);
+          const error = responseError(responseData);
           error.__logged = true;
           throw error;
         } else if (responseData && typeof responseData === "object" && responseData.message) {
-          const error = new Error(responseData.message);
+          const error = responseError(responseData.message);
           error.__logged = true;
           throw error;
         } else {
-          const error = new Error("链接后缀已被占用，请尝试其他后缀");
+          const error = responseError("链接后缀已被占用，请尝试其他后缀");
           error.__logged = true;
           throw error;
         }
@@ -411,7 +415,7 @@ export async function fetchApi(endpoint, options = {}) {
             ? responseData.requestId.trim()
             : requestId;
         const debugMessage = typeof responseData.debugMessage === "string" ? responseData.debugMessage : null;
-        const error = new Error(appendDebugInfoIfNeeded(baseMessage, { requestId: payloadRequestId, debugMessage }));
+        const error = responseError(appendDebugInfoIfNeeded(baseMessage, { requestId: payloadRequestId, debugMessage }));
         error.__logged = true;
         if (responseData.code) {
           error.code = responseData.code;
@@ -429,7 +433,7 @@ export async function fetchApi(endpoint, options = {}) {
       }
 
       apiLog.error(`❌ HTTP错误(${url}): ${response.status}`, responseData);
-      const error = new Error(appendRequestIdIfNeeded(`HTTP错误 ${response.status}: ${response.statusText}`, requestId));
+      const error = responseError(appendRequestIdIfNeeded(`HTTP错误 ${response.status}: ${response.statusText}`, requestId));
       error.__logged = true;
       if (requestId) {
         error.requestId = requestId;
@@ -449,7 +453,8 @@ export async function fetchApi(endpoint, options = {}) {
               ? responseData.requestId.trim()
               : requestId;
           const debugMessage = typeof responseData.debugMessage === "string" ? responseData.debugMessage : null;
-          const error = new Error(appendDebugInfoIfNeeded(baseMessage, { requestId: payloadRequestId, debugMessage }));
+          const error = responseError(appendDebugInfoIfNeeded(baseMessage, { requestId: payloadRequestId, debugMessage }));
+          if (typeof responseData.code === "number" && responseData.code >= 400) error.status = responseData.code;
           error.__logged = true;
           if (responseData.code) {
             error.code = responseData.code;
@@ -477,7 +482,8 @@ export async function fetchApi(endpoint, options = {}) {
             ? responseData.requestId.trim()
             : requestId;
         const debugMessage = typeof responseData.debugMessage === "string" ? responseData.debugMessage : null;
-        const error = new Error(appendDebugInfoIfNeeded(responseData.message, { requestId: payloadRequestId, debugMessage }));
+        const error = responseError(appendDebugInfoIfNeeded(responseData.message, { requestId: payloadRequestId, debugMessage }));
+        error.status = responseData.code;
         error.__logged = true;
         error.code = responseData.code;
         if (payloadRequestId) {
