@@ -55,7 +55,6 @@
           @click="emit('move')"
         >
           <IconArrowRight size="sm" />
-          <span class="text-xs">{{ t('mount.fileItem.move') }}</span>
         </ActionButton>
 
         <!-- 添加到文件篮按钮 - 购物车图标 -->
